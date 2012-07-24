@@ -1,13 +1,13 @@
-Source: ros-fuerte-object-recognition-linemod
+Source: ros-groovy-object-recognition-linemod
 Section: misc
 Priority: extra
 Maintainer: Vincent Rabaud <vrabaud@willowgarage.com>
-Build-Depends: debhelper (>= 7.0.50~), ros-fuerte-opencv2,ros-fuerte-catkin,ros-fuerte-object-recognition-core,ros-fuerte-ecto
+Build-Depends: debhelper (>= 7.0.50~), ros-groovy-ecto,ros-groovy-catkin,ros-groovy-opencv2,ros-groovy-object-recognition-core
 Homepage: https://github.com/wg-perception/linemod
 Standards-Version: 3.9.2
 
-Package: ros-fuerte-object-recognition-linemod
+Package: ros-groovy-object-recognition-linemod
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, ros-fuerte-opencv2,ros-fuerte-object-recognition-core,ros-fuerte-ecto
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-groovy-ecto,ros-groovy-opencv2,ros-groovy-object-recognition-core
 Description: An object recognition pipeline that uses LINE-MOD from OpenCV
 
