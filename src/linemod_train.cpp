@@ -40,6 +40,9 @@
 #include <opencv2/core/core.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/objdetect/objdetect.hpp>
+#include "opencv2/highgui/highgui.hpp"
+
+#include <iostream>
 
 using ecto::tendrils;
 using ecto::spore;
@@ -83,38 +86,89 @@ namespace ecto_linemod
     {
       CV_Assert(depth_mask_->type() == CV_8UC1);
 
+	  //applying Morph_open and Morph_close operators to clear a bit of noise in the mask
+	  cv::Mat tmp_depth_mask(depth_mask_->cols, depth_mask_->rows, depth_mask_->type());
+	  cv::Mat kernelOpen = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(7,7));
+	  cv::Mat kernelClose = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5,5));
+	  cv::morphologyEx(*depth_mask_, tmp_depth_mask, cv::MORPH_OPEN, kernelOpen, cv::Point(-1,-1), 1);
+	  cv::morphologyEx(tmp_depth_mask, tmp_depth_mask, cv::MORPH_CLOSE, kernelClose, cv::Point(-1,-1), 1);
+
       // Figure out the interesting bounding box in the depth mask
-      int x_min = depth_->cols, x_max = 0, y_min = depth_->rows, y_max = 0;
-      for (int v = 0; v != depth_->rows; ++v)
+      int x_min = -1, x_max = depth_->cols, y_min = -1, y_max = depth_->rows;
+      bool rowIsZero = true;
+      // Figure out y_min
+      while (rowIsZero)
       {
-        uchar *row =depth_mask_->ptr(v);
-        uchar*row_end = row+depth_->cols;
-        for (; row!=row_end; ++row)
-        {
-          if (!*row)
-            continue;
-          //TODO
-        }
+        ++y_min;
+        for (uchar *row = &tmp_depth_mask.at < uchar > (y_min, 0), *row_end = row + tmp_depth_mask.cols; row != row_end;
+            ++row)
+          if (*row)
+          {
+            rowIsZero = false;
+            break;
+          }
+      }
+      // Figure out y_max
+      rowIsZero = true;
+      while (rowIsZero)
+      {
+        --y_max;
+        for (uchar *row = &tmp_depth_mask.at < uchar > (y_max, 0), *row_end = row + tmp_depth_mask.cols; row != row_end;
+            ++row)
+          if (*row)
+          {
+            rowIsZero = false;
+            break;
+          }
       }
 
-      cv::Rect area(x_min, y_min, x_max - x_min, y_max - y_min);
+      // Figure out x_min
+      bool colIsZero = true;
+      while (colIsZero)
+      {
+        ++x_min;
+        for (uchar *row = &tmp_depth_mask.at < uchar > (y_min, x_min), *row_end = &tmp_depth_mask.at < uchar
+            > (y_max, x_min); row != row_end; row += tmp_depth_mask.step)
+          if (*row)
+          {
+            colIsZero = false;
+            break;
+          }
+      }
+      // Figure out x_max
+      colIsZero = true;
+      while (colIsZero)
+      {
+        --x_max;
+        for (uchar *row = &tmp_depth_mask.at < uchar > (y_min, x_max), *row_end = &tmp_depth_mask.at < uchar
+            > (y_max, x_max); row != row_end; row += tmp_depth_mask.step)
+          if (*row)
+          {
+            colIsZero = false;
+            break;
+          }
+      }
+
+      cv::Rect area(x_min, y_min, x_max + 1 - x_min, y_max + 1 - y_min);
 
       // Only save the interesting areas to the models
       cv::Mat depth, image, mask;
+
       cv::Range row_range = cv::Range(area.y, area.y + area.height), col_range = cv::Range(area.x, area.x + area.width);
-      cv::Range row_range_image = cv::Range((area.y * image_->cols) / mask.cols,
-                                            ((area.y + area.height) * image_->cols) / mask.cols), col_range_image =
-          cv::Range((area.x * image_->rows) / mask.rows, ((area.x + area.width) * image_->rows) / mask.rows);
+      cv::Range row_range_image = cv::Range((area.y * image_->cols) / tmp_depth_mask.cols,
+                                            ((area.y + area.height) * image_->cols) / tmp_depth_mask.cols),
+          col_range_image = cv::Range((area.x * image_->rows) / tmp_depth_mask.rows,
+                                      ((area.x + area.width) * image_->rows) / tmp_depth_mask.rows);
 
       (*depth_)(row_range, col_range).copyTo(depth);
       cv::resize((*image_)(row_range_image, col_range_image), image, cv::Size(area.width, area.height), 0.0, 0.0,
                  CV_INTER_NN);
-      (*depth_mask_)(row_range, col_range).copyTo(mask);
+      (tmp_depth_mask)(row_range, col_range).copyTo(mask);
 
       depths_->push_back(depth);
       images_->push_back(image);
       masks_->push_back(mask);
-
+			
       // Also store the pose of each template
       Rs_->push_back(*R_);
       Ts_->push_back(*T_);
