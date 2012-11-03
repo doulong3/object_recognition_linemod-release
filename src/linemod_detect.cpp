@@ -86,12 +86,24 @@ namespace ecto_linemod
        else
        throw std::runtime_error("Unsupported method. Supported ones are: DefaultLINEMOD");*/
 
+      bool is_first = true;
       BOOST_FOREACH(const object_recognition_core::db::Document & document, db_documents)
       {
         std::string object_id = document.get_value < ObjectId > ("object_id");
 
+        if (is_first) {
+          is_first = false;
+          document.get_attachment < cv::linemod::Detector > ("detector", detector_);
+          printf("Loaded %s\n", object_id.c_str());
+          continue;
+        }
+
         // Load the detector for that class
-        document.get_attachment < cv::linemod::Detector > ("detector", detector_);
+        cv::linemod::Detector detector;
+        document.get_attachment < cv::linemod::Detector > ("detector", detector);
+        std::string object_id_in_db = detector.classIds()[0];
+        for (size_t template_id = 0; template_id < detector.numTemplates(); ++template_id)
+          detector_.addSyntheticTemplate(detector.getTemplates(object_id_in_db, template_id), object_id);
 
         // TODO, load those detectors into the main detector or different objects
 
@@ -142,7 +154,7 @@ namespace ecto_linemod
       detector_.match(sources, *threshold_, matches);
       pose_results_->clear();
       cv::Mat display = color;
-      int num_modalities = (int)detector_.getModalities().size();
+      int num_modalities = (int) detector_.getModalities().size();
 
       //std::cout << matches.size() << std::endl;
       BOOST_FOREACH(const cv::linemod::Match & match, matches)
