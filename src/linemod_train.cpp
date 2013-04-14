@@ -33,16 +33,29 @@
  *
  */
 
+#include <iostream>
+#include <fstream>
+#include <stdio.h>
+#include <vector>
+
 #include <ecto/ecto.hpp>
 
-#include <object_recognition_core/common/json.hpp>
-
 #include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/objdetect/objdetect.hpp>
-#include "opencv2/highgui/highgui.hpp"
 
-#include <iostream>
+#include <object_recognition_core/common/json.hpp>
+#include <object_recognition_core/db/db.h>
+#include <object_recognition_core/db/document.h>
+#include <object_recognition_core/db/model_utils.h>
+
+#define USE_GLUT 1
+#if USE_GLUT
+#include <object_recognition_renderer/renderer_glut.h>
+#else
+#include <object_recognition_renderer/renderer_osmesa.h>
+#endif
 
 using ecto::tendrils;
 using ecto::spore;
@@ -52,25 +65,14 @@ namespace ecto_linemod
   struct Trainer
   {
     static void
-    declare_params(tendrils& params)
-    {
-      /// @todo Parameters for various LINE-MOD settings?
-      params.declare(&Trainer::json_submethod_, "json_submethod", "The submethod to use, as a JSON string.").required(
-          true);
-    }
-
-    static void
     declare_io(const tendrils& params, tendrils& inputs, tendrils& outputs)
     {
-      inputs.declare(&Trainer::image_, "image", "An rgb full frame image.").required(true);
-      inputs.declare(&Trainer::depth_, "depth", "The 16bit depth image.").required(true);
-      inputs.declare(&Trainer::depth_mask_, "mask", "The mask for the depth.").required(true);
-      outputs.declare(&Trainer::R_, "R", "The matching rotation of the template");
-      outputs.declare(&Trainer::T_, "T", "The matching translation of the template.");
+    inputs.declare(&Trainer::json_db_, "json_db", "The DB parameters", "{}").required(
+        true);
+    inputs.declare(&Trainer::object_id_, "object_id",
+        "The object id, to associate this model with.").required(true);
 
-      outputs.declare(&Trainer::depths_, "depths", "The matching rotations of the templates");
-      outputs.declare(&Trainer::images_, "images", "The matching rotations of the templates");
-      outputs.declare(&Trainer::masks_, "masks", "The matching rotations of the templates");
+      outputs.declare(&Trainer::detector_, "detector", "The LINE-MOD detector");
       outputs.declare(&Trainer::Rs_, "Rs", "The matching rotations of the templates");
       outputs.declare(&Trainer::Ts_, "Ts", "The matching translations of the templates.");
     }
@@ -78,113 +80,100 @@ namespace ecto_linemod
     void
     configure(const tendrils& params, const tendrils& inputs, const tendrils& outputs)
     {
-      or_json::mValue submethod = object_recognition_core::to_json(*json_submethod_);
+      //or_json::mValue submethod = object_recognition_core::to_json(*json_submethod_);
     }
 
-    int
-    process(const tendrils& inputs, const tendrils& outputs)
+  int process(const tendrils& inputs, const tendrils& outputs) {
+    // Get the document for the object_id_ from the DB
+    object_recognition_core::db::ObjectDbPtr db =
+        object_recognition_core::db::ObjectDbParameters(*json_db_).generateDb();
+    object_recognition_core::db::Documents documents =
+        object_recognition_core::db::ModelDocuments(db,
+            std::vector<object_recognition_core::db::ObjectId>(1, *object_id_),
+            "mesh");
+    if (documents.empty()) {
+      std::stringstream ss;
+      ss << "No object with id \"" << *object_id_ << "\" with a mesh in the DB"
+          << std::endl;
+      throw std::runtime_error(ss.str());
+    }
+
+    // Load the mesh and save it to a temporary file
+    object_recognition_core::db::Document document = documents[0];
+    std::string mesh_path;
     {
-      CV_Assert(depth_mask_->type() == CV_8UC1);
+      char mesh_path_tmp[L_tmpnam];
+      tmpnam(mesh_path_tmp);
+      mesh_path = std::string(mesh_path_tmp) + ".stl";
+    }
 
-	  //applying Morph_open and Morph_close operators to clear a bit of noise in the mask
-	  cv::Mat tmp_depth_mask(depth_mask_->cols, depth_mask_->rows, depth_mask_->type());
-	  cv::Mat kernelOpen = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(7,7));
-	  cv::Mat kernelClose = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5,5));
-	  cv::morphologyEx(*depth_mask_, tmp_depth_mask, cv::MORPH_OPEN, kernelOpen, cv::Point(-1,-1), 1);
-	  cv::morphologyEx(tmp_depth_mask, tmp_depth_mask, cv::MORPH_CLOSE, kernelClose, cv::Point(-1,-1), 1);
+    std::ofstream mesh_file;
+    mesh_file.open(mesh_path.c_str());
+    document.get_attachment_stream("mesh.stl", mesh_file);
+    mesh_file.close();
 
-      // Figure out the interesting bounding box in the depth mask
-      int x_min = -1, x_max = depth_->cols, y_min = -1, y_max = depth_->rows;
-      bool rowIsZero = true;
-      // Figure out y_min
-      while (rowIsZero)
+      cv::Ptr<cv::linemod::Detector> detector_ptr = cv::linemod::getDefaultLINEMOD();
+      *detector_ = *detector_ptr;
+
+      // Define the display
+      size_t width = 640, height = 480;
+      double near = 0.1, far = 1000;
+      double focal_length_x = 525, focal_length_y = 525;
+
+    // the model name can be specified on the command line.
+#if USE_GLUT
+    RendererGlut renderer = RendererGlut(mesh_path);
+#else
+    RendererOSMesa renderer = RendererOSMesa(mesh_path);
+#endif
+    renderer.set_parameters(width, height, focal_length_x, focal_length_y, near,
+        far);
+    std::remove(mesh_path.c_str());
+
+      RendererIterator renderer_iterator = RendererIterator(&renderer, 150);
+
+      cv::Mat image, depth, mask;
+      cv::Mat_<unsigned short> depth_short;
+      cv::Matx33d R;
+      cv::Vec3d T;
+      for (size_t i = 0; !renderer_iterator.isDone(); ++i, ++renderer_iterator)
       {
-        ++y_min;
-        for (uchar *row = &tmp_depth_mask.at < uchar > (y_min, 0), *row_end = row + tmp_depth_mask.cols; row != row_end;
-            ++row)
-          if (*row)
-          {
-            rowIsZero = false;
-            break;
-          }
-      }
-      // Figure out y_max
-      rowIsZero = true;
-      while (rowIsZero)
-      {
-        --y_max;
-        for (uchar *row = &tmp_depth_mask.at < uchar > (y_max, 0), *row_end = row + tmp_depth_mask.cols; row != row_end;
-            ++row)
-          if (*row)
-          {
-            rowIsZero = false;
-            break;
-          }
-      }
+      std::stringstream status;
+      status << "Loading images " << (i+1) << "/"
+          << renderer_iterator.n_templates();
+      std::cout << status.str();
 
-      // Figure out x_min
-      bool colIsZero = true;
-      while (colIsZero)
-      {
-        ++x_min;
-        for (uchar *row = &tmp_depth_mask.at < uchar > (y_min, x_min), *row_end = &tmp_depth_mask.at < uchar
-            > (y_max, x_min); row != row_end; row += tmp_depth_mask.step)
-          if (*row)
-          {
-            colIsZero = false;
-            break;
-          }
-      }
-      // Figure out x_max
-      colIsZero = true;
-      while (colIsZero)
-      {
-        --x_max;
-        for (uchar *row = &tmp_depth_mask.at < uchar > (y_min, x_max), *row_end = &tmp_depth_mask.at < uchar
-            > (y_max, x_max); row != row_end; row += tmp_depth_mask.step)
-          if (*row)
-          {
-            colIsZero = false;
-            break;
-          }
-      }
+        renderer_iterator.render(image, depth, mask);
+        R = renderer_iterator.R();
+        T = renderer_iterator.T();
 
-      cv::Rect area(x_min, y_min, x_max + 1 - x_min, y_max + 1 - y_min);
+        depth.convertTo(depth_short, CV_16U, 1000);
 
-      // Only save the interesting areas to the models
-      cv::Mat depth, image, mask;
+        std::vector<cv::Mat> sources(2);
+        sources[0] = image;
+        sources[1] = depth;
 
-      cv::Range row_range = cv::Range(area.y, area.y + area.height), col_range = cv::Range(area.x, area.x + area.width);
-      cv::Range row_range_image = cv::Range((area.y * image_->cols) / tmp_depth_mask.cols,
-                                            ((area.y + area.height) * image_->cols) / tmp_depth_mask.cols),
-          col_range_image = cv::Range((area.x * image_->rows) / tmp_depth_mask.rows,
-                                      ((area.x + area.width) * image_->rows) / tmp_depth_mask.rows);
+        detector_->addTemplate(sources, "object1", mask);
 
-      (*depth_)(row_range, col_range).copyTo(depth);
-      cv::resize((*image_)(row_range_image, col_range_image), image, cv::Size(area.width, area.height), 0.0, 0.0,
-                 CV_INTER_NN);
-      (tmp_depth_mask)(row_range, col_range).copyTo(mask);
+        // Also store the pose of each template
+        Rs_->push_back(cv::Mat(R));
+        Ts_->push_back(cv::Mat(T));
 
-      depths_->push_back(depth);
-      images_->push_back(image);
-      masks_->push_back(mask);
-			
-      // Also store the pose of each template
-      Rs_->push_back(*R_);
-      Ts_->push_back(*T_);
+      // Delete the status
+      for (size_t j = 0; j < status.str().size(); ++j)
+        std::cout << '\b';
+    }
 
       return ecto::OK;
     }
 
-    spore<cv::Mat> image_, depth_, depth_mask_;
-    spore<std::vector<cv::Mat> > depths_;
-    spore<std::vector<cv::Mat> > images_;
-    spore<std::vector<cv::Mat> > masks_;
+    /** The DB parameters as a JSON string */
+    ecto::spore<std::string> json_db_;
+    /** The id of the object to generate a trainer for */
+    ecto::spore<std::string> object_id_;
+    ecto::spore<cv::linemod::Detector> detector_;
     spore<std::vector<cv::Mat> > Rs_;
     spore<std::vector<cv::Mat> > Ts_;
-    spore<cv::Mat> R_;
-    spore<cv::Mat> T_;
-    spore<std::string> json_submethod_;
   };
 } // namespace ecto_linemod
 
