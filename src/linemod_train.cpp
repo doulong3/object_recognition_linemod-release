@@ -47,6 +47,7 @@
 
 #include <object_recognition_core/common/json.hpp>
 #include <object_recognition_core/db/db.h>
+#include <object_recognition_core/db/document.h>
 #include <object_recognition_core/db/model_utils.h>
 
 #define USE_GLUT 1
@@ -89,7 +90,7 @@ namespace ecto_linemod
     object_recognition_core::db::Documents documents =
         object_recognition_core::db::ModelDocuments(db,
             std::vector<object_recognition_core::db::ObjectId>(1, *object_id_),
-            "mesh", "");
+            "mesh");
     if (documents.empty()) {
       std::stringstream ss;
       ss << "No object with id \"" << *object_id_ << "\" with a mesh in the DB"
