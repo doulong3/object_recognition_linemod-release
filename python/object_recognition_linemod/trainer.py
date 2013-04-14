@@ -16,16 +16,26 @@ class LinemodTrainer(ecto.BlackBox, TrainerBase):
 
     def __init__(self, *args, **kwargs):
         ecto.BlackBox.__init__(self, *args, **kwargs)
-        TrainerBase.__init__(self, *args, **kwargs)
+        TrainerBase.__init__(self)
 
     @classmethod
     def declare_cells(cls, _p):
-        return {'trainer': CellInfo(ecto_linemod.Trainer),
-                'model_filler': CellInfo(ecto_linemod.ModelFiller)}
+        # passthrough cells
+        cells = {'json_db': CellInfo(ecto.Constant),
+                 'object_id': CellInfo(ecto.Constant)
+                 }
+
+        # 'real cells'
+        cells.update({'model_filler': CellInfo(ecto_linemod.ModelFiller),
+                      'model_writer': CellInfo(ModelWriter, params={'method':'LINEMOD'}),
+                      'trainer': CellInfo(ecto_linemod.Trainer)})
+
+        return cells
 
     @classmethod
     def declare_forwards(cls, _p):
-        p = {'trainer': 'all'}
+        p = {'json_db': [Forward('value', 'json_db')],
+             'object_id': [Forward('value', 'object_id')]}
         i = {}
         o = {}
 
@@ -33,13 +43,17 @@ class LinemodTrainer(ecto.BlackBox, TrainerBase):
 
     def connections(self, _p):
         connections = []
-        self.model_writer = ModelWriter()
+
+        # connect the constants
+        connections += [ self.json_db['out'] >> self.model_writer['json_db'],
+                        self.json_db['out'] >> self.trainer['json_db'],
+                         self.object_id['out'] >> self.trainer['object_id'] ]
 
         # connect the output to the post-processor
-        for key in set(self.trainer.outputs.keys()).intersection(self.model_filler.inputs.keys()):
-            connections += [self.trainer[key] >> self.model_filler[key]]
+        connections += [self.trainer['detector','Rs','Ts'] >> self.model_filler['detector','Rs','Ts']]
 
         # and write everything to the DB
-        connections += [self.model_filler["db_document"] >> self.model_writer["db_document"]]
+        connections += [ self.object_id['out'] >> self.model_writer['object_id'],
+                         self.model_filler['db_document'] >> self.model_writer['db_document']]
 
         return connections

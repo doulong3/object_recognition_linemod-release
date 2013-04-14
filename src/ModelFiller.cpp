@@ -37,7 +37,7 @@
 #include <opencv2/core/core.hpp>
 
 #include <object_recognition_core/common/types.h>
-#include <object_recognition_core/db/db.h>
+#include <object_recognition_core/db/document.h>
 
 #include "db_linemod.h"
 
@@ -53,9 +53,9 @@ namespace linemod_ecto
     declare_io(const ecto::tendrils& params, ecto::tendrils& inputs, ecto::tendrils& outputs)
     {
       typedef ModelFiller C;
-      inputs.declare(&C::detector_, "detector", "The LINE-MOD detector");
-      inputs.declare(&C::Rs_, "Rs", "The matching rotations of the templates");
-      inputs.declare(&C::Ts_, "Ts", "The matching translations of the templates.");
+      inputs.declare(&C::detector_, "detector", "The LINE-MOD detector").required(true);
+      inputs.declare(&C::Rs_, "Rs", "The matching rotations of the templates").required(true);
+      inputs.declare(&C::Ts_, "Ts", "The matching translations of the templates.").required(true);
 
       outputs.declare(&C::db_document_, "db_document", "The filled document.");
     }
@@ -63,10 +63,15 @@ namespace linemod_ecto
     int
     process(const ecto::tendrils& inputs, const ecto::tendrils& outputs)
     {
-      db_document_->set_attachment < cv::linemod::Detector > ("detector", *detector_);
-      db_document_->set_attachment<std::vector<cv::Mat> >("Rs", *Rs_);
-      db_document_->set_attachment<std::vector<cv::Mat> >("Ts", *Ts_);
-      return ecto::OK;
+    Document db_document;
+
+    db_document.set_attachment<cv::linemod::Detector>("detector", *detector_);
+    db_document.set_attachment<std::vector<cv::Mat> >("Rs", *Rs_);
+    db_document.set_attachment<std::vector<cv::Mat> >("Ts", *Ts_);
+
+    *db_document_ = db_document;
+
+    return ecto::OK;
     }
 
   private:
