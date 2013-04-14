@@ -3,27 +3,57 @@
 Module defining the LINE-MOD trainer to train the LINE-MOD models
 """
 
-from object_recognition_core.pipelines.training import TrainingPipeline
-from object_recognition_core.utils.json_helper import dict_to_cpp_json_str
+from ecto import BlackBoxCellInfo as CellInfo, BlackBoxForward as Forward
+from object_recognition_core.ecto_cells.db import ModelWriter
+from object_recognition_core.pipelines.training import TrainerBase
 import ecto
 import ecto_cells.ecto_linemod as ecto_linemod
 
 ########################################################################################################################
 
-class LinemodTrainingPipeline(TrainingPipeline):
+class LinemodTrainer(ecto.BlackBox, TrainerBase):
     '''Implements the training pipeline functions'''
 
-    @classmethod
-    def type_name(cls):
-        return "LINEMOD"
+    def __init__(self, *args, **kwargs):
+        ecto.BlackBox.__init__(self, *args, **kwargs)
+        TrainerBase.__init__(self)
 
     @classmethod
-    def incremental_model_builder(cls, *args, **kwargs):
-        submethod = kwargs.get('submethod')
-        return ecto_linemod.Trainer(json_submethod=dict_to_cpp_json_str(submethod))
+    def declare_cells(cls, _p):
+        # passthrough cells
+        cells = {'json_db': CellInfo(ecto.Constant),
+                 'object_id': CellInfo(ecto.Constant)
+                 }
+
+        # 'real cells'
+        cells.update({'model_filler': CellInfo(ecto_linemod.ModelFiller),
+                      'model_writer': CellInfo(ModelWriter, params={'method':'LINEMOD'}),
+                      'trainer': CellInfo(ecto_linemod.Trainer)})
+
+        return cells
 
     @classmethod
-    def post_processor(cls, *args, **kwargs):
-        #if not search_params:
-        #    raise RuntimeError("You must supply search parameters for TOD.")
-        return ecto_linemod.ModelFiller()
+    def declare_forwards(cls, _p):
+        p = {'json_db': [Forward('value', 'json_db')],
+             'object_id': [Forward('value', 'object_id')]}
+        i = {}
+        o = {}
+
+        return (p, i, o)
+
+    def connections(self, _p):
+        connections = []
+
+        # connect the constants
+        connections += [ self.json_db['out'] >> self.model_writer['json_db'],
+                        self.json_db['out'] >> self.trainer['json_db'],
+                         self.object_id['out'] >> self.trainer['object_id'] ]
+
+        # connect the output to the post-processor
+        connections += [self.trainer['detector','Rs','Ts'] >> self.model_filler['detector','Rs','Ts']]
+
+        # and write everything to the DB
+        connections += [ self.object_id['out'] >> self.model_writer['object_id'],
+                         self.model_filler['db_document'] >> self.model_writer['db_document']]
+
+        return connections
