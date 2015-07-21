@@ -1,0 +1,12 @@
+Source: ros-indigo-object-recognition-linemod
+Section: misc
+Priority: extra
+Maintainer: Vincent Rabaud <vincent.rabaud@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), ros-indigo-catkin, ros-indigo-ecto, ros-indigo-object-recognition-core, ros-indigo-object-recognition-renderer, ros-indigo-opencv-candidate
+Homepage: https://github.com/wg-perception/linemod
+Standards-Version: 3.9.2
+
+Package: ros-indigo-object-recognition-linemod
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-indigo-ecto, ros-indigo-object-recognition-core, ros-indigo-object-recognition-renderer, ros-indigo-opencv-candidate
+Description: An object recognition pipeline that uses LINE-MOD from OpenCV
